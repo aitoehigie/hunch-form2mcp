@@ -1,0 +1,23 @@
+{
+  "name": "hunch-form2mcp",
+  "version": "0.1.0",
+  "description": "Convert website HTML forms into MCP tool definitions and Hunch-compatible HTML attributes",
+  "main": "dist/index.js",
+  "bin": {
+    "hunch-form2mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --format=cjs --out-file=dist/index.js",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "linkedom": "^0.16.0",
+    "commander": "^11.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^0.30.0",
+    "esbuild": "^0.19.0"
+  }
+}
