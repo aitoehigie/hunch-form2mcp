@@ -7,17 +7,21 @@
     "hunch-form2mcp": "dist/index.js"
   },
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --format=cjs --out-file=dist/index.js",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=cjs --outfile=dist/index.js",
     "start": "node dist/index.js",
     "test": "vitest run"
   },
   "license": "MIT",
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "dependencies": {
-    "linkedom": "^0.16.0",
-    "commander": "^11.0.0"
+    "commander": "^11.0.0",
+    "linkedom": "^0.16.0"
   },
   "devDependencies": {
-    "vitest": "^0.30.0",
-    "esbuild": "^0.19.0"
+    "esbuild": "^0.19.0",
+    "vitest": "^1.6.0"
   }
 }
