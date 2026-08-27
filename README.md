@@ -1,14 +1,15 @@
 # hunch-form2mcp
 
-Convert website HTML forms into MCP tool definitions and Hunch-compatible HTML attributes.
+Convert website HTML forms into MCP tool definitions and Hunch-compatible HTML attributes — **single file or entire site.**
 
-**No API key needed** — pure HTML parsing + rule-based classification. Works entirely offline.
+**No API key needed** — pure HTML parsing + rule-based classification. Works offline. Site crawler uses same-origin BFS with native `fetch`.
 
 ## Installation
 
 ```bash
-# Global install (CLI)
+# Global install (CLI) — npx works after 0.1.4 shebang fix
 npm i -g hunch-form2mcp
+npx hunch-form2mcp --help
 
 # Or as a library
 npm i hunch-form2mcp
@@ -18,20 +19,29 @@ npm i hunch-form2mcp
 
 ```bash
 # From an HTML file
-hunch-form2mcp forms.html
+hunch-form2mcp --input forms.html
 
-# From a URL (requires network)
-hunch-form2mcp https://example.com/contact
+# From a single URL (no crawl)
+hunch-form2mcp --input https://example.com/contact
+
+# Crawl entire site (new in 0.1.5) — BFS same-origin, max 20 pages default
+hunch-form2mcp --input https://example.com --crawl
+hunch-form2mcp --input https://example.com --crawl --max-pages 50
 
 # Output formats
---format json    MCP tool definition JSON
---format html    Hunch data attributes
+--format json    MCP tool definition JSON (for catalogs, Claude, Cursor, opencode)
+--format html    WebMCP declarative HTML (toolname / toolparamdescription)
 --format both    Both (default)
+
+# Full example
+hunch-form2mcp --input https://example.com --crawl --max-pages 20 --format both
 ```
+
+**Crawl behavior:** `src/crawler.ts` — BFS queue, `linkedom` link extraction, `sameOrigin=true` (skips `https://other.com`, `mailto:`, `#`, `javascript:`), skips non-HTML `content-type` and `*.png|jpg|pdf|woff`, 100ms delay, `AbortController` timeout 8s. Each form keeps `pageUrl` where it was found (shown in `_hunch.pageUrl` and summary `Crawled N page(s)`).
 
 ## Output Examples
 
-### MCP JSON (for MCP catalogs, MCP clients like Claude, Cursor, opencode):
+### MCP JSON (for MCP catalogs, Claude/Cursor/opencode) — also via `npx ... --format json`:
 
 ```json
 {
@@ -40,28 +50,33 @@ hunch-form2mcp https://example.com/contact
   "inputSchema": {
     "type": "object",
     "properties": {
-      "name": {"type": "string", "description": "name"},
-      "email": {"type": "string", "format": "email", "description": "email"},
-      "subject": {"type": "string", "description": "subject"}
+      "email": {"type": "string", "format": "email", "description": "Your Email"},
+      "message": {"type": "string", "description": "message"}
     },
-    "required": ["name", "email"]
+    "required": ["email", "message"]
   },
-  "category": "contact",
-  "triggerText": "Send Message",
-  "pageUrl": "/contact"
+  "_hunch": {
+    "category": "contact",
+    "triggerText": "Send Message",
+    "pageUrl": "https://example.com/contact"
+  }
 }
 ```
+Paste into `document.modelContext.registerTool({ name, description, inputSchema, execute })` — Chrome 146+ `#enable-webmcp-testing`.
 
-### Hunch HTML Attributes (paste directly into form HTML):
+### WebMCP Declarative HTML (`--format html`) — paste into your existing `<form>`, no JS:
 
 ```html
-<form data-modal="hunch-contactSales" data-mode="sales" 
-      data-category="contact" data-tool-name="contactSales" 
-      data-page-url="/contact" data-trigger-text="Send Message">
-  <!-- Form fields go here -->
-  <button type="submit">Submit</button>
+<form toolname="contactSales" tooldescription="Send a message or contact the team" toolautosubmit>
+  <input name="email" type="email" toolparamdescription="Your Email" required />
+  <input name="message" type="text" toolparamdescription="message" required />
+  <button type="submit">Send Message</button>
 </form>
+<!-- select → <select toolparamdescription> with <option>s -->
 ```
+Discovered via `document.modelContext.getTools()`. `toolautosubmit` auto-POSTs to form `action`.
+
+When `--crawl` is used, each discovered form emits its own pair of blocks with `// Tool 1: contactSales — https://example.com/contact`.
 
 ## Supported Form Types
 
@@ -85,17 +100,29 @@ hunch-form2mcp https://example.com/contact
 3. **Form name attribute** — legacy designations
 4. **Fallback** — generic `submitForm`
 
+## Library Usage
+
+```js
+import { parseFormsFromHtml } from 'hunch-form2mcp/src/parser'
+import { classifyIntent } from 'hunch-form2mcp/src/classifier'
+import { formatMcpOutput } from 'hunch-form2mcp/src/mcpFormatter'
+import { crawlSite } from 'hunch-form2mcp/src/crawler'
+
+const forms = parseFormsFromHtml(html)
+const tools = forms.map(f => classifyIntent(f))
+formatMcpOutput(tools, 'both')
+
+// site-wide
+const crawled = await crawlSite('https://example.com', { maxPages: 20 })
+```
+
 ## Development
 
 ```bash
-# Build
-npm run build
-
-# Test
-npm test
-
-# Local development
-node dist/index.js --input /path/to/form.html
+npm run build   # esbuild --banner:js shebang → dist/index.js (chmod +x)
+npm test        # vitest run — 104 tests (parser 23, classifier 24, formatter 14, integration 21, crawler 13, cli 9)
+node dist/index.js --input /tmp/test.html --format both
+node dist/index.js --input https://example.com --crawl --max-pages 5
 ```
 
 ## License
