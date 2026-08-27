@@ -1,10 +1,13 @@
 /**
- * formatMcpOutput — Generate MCP tool definitions + HTML attributes from classified tools.
- * 
+ * formatMcpOutput — Generate strict WebMCP primitives from classified tools.
+ *
  * Output formats:
- * - json: MCP Tool Definition JSON (for MCP catalogs, MCP clients)
- * - html: Hunch-compatible data attributes (for embedding widget on websites)
- * - both: Both of the above
+ * - json: ModelContextTool JSON (WebMCP imperative shape: name, description, inputSchema) — copy into document.modelContext.registerTool()
+ * - html: WebMCP declarative attributes (toolname, tooldescription, toolparamdescription, toolautosubmit) — paste into your <form>/<input> tags; discovered via document.modelContext.getTools()
+ * - both: Both of the above (default)
+ *
+ * Spec: https://webmachinelearning.github.io/webmcp/ + https://developer.chrome.com/docs/ai/webmcp
+ * Declarative: <form toolname tooldescription toolautosubmit><input toolparamdescription>
  */
 import { classifyIntent } from './classifier'
 
@@ -14,17 +17,22 @@ export interface FormatResults {
 }
 
 /**
- * Generate MCP tool definition JSON from a classified tool.
+ * Strict WebMCP ModelContextTool JSON. Stringified inputSchema is JSON Schema 2020-12.
+ * This is the shape passed to document.modelContext.registerTool({ name, description, inputSchema, execute })
  */
-function formatMcpJson(tool: ReturnType<typeof classifyIntent>): string {
+function formatWebMcpJson(tool: ReturnType<typeof classifyIntent>): string {
+  // Keep only WebMCP-primitive fields; extra Hunch routing hints go in _hunch meta
   return JSON.stringify(
     {
       name: tool.name,
       description: tool.description,
       inputSchema: tool.inputSchema,
-      category: tool.category,
-      triggerText: tool.triggerText,
-      pageUrl: tool.pageUrl,
+      // non-standard hint for Hunch widget / debugging, not part of WebMCP spec
+      _hunch: {
+        category: tool.category,
+        triggerText: tool.triggerText,
+        pageUrl: tool.pageUrl,
+      },
     },
     null,
     2,
@@ -32,53 +40,62 @@ function formatMcpJson(tool: ReturnType<typeof classifyIntent>): string {
 }
 
 /**
- * Generate Hunch-compatible HTML data attributes from a classified tool.
- * These can be pasted directly into form HTML to make forms discoverable
- * by the Hunch widget without any JavaScript configuration.
+ * Strict WebMCP declarative HTML. Paste the attributes into your existing form.
+ * Browser synthesizes the same JSON Schema as above; no JS required.
+ * See: https://developer.chrome.com/docs/ai/webmcp#declarative-api
  */
-function formatHunchHtml(tool: ReturnType<typeof classifyIntent>): string {
-  const attrs: string[] = []
+function formatWebMcpHtml(tool: ReturnType<typeof classifyIntent>): string {
+  const esc = (s: string) => s.replace(/"/g, '&quot;')
+  const formAttrs = [
+    `toolname="${esc(tool.name)}"`,
+    `tooldescription="${esc(tool.description)}"`,
+    `toolautosubmit`,
+  ]
 
-  // Core modal/popup attributes
-  attrs.push(`data-modal="hunch-${tool.name}"`)
+  const fields = Object.entries(tool.inputSchema.properties).map(([key, prop]: [string, any]) => {
+    const required = tool.inputSchema.required.includes(key) ? ' required' : ''
+    const type = prop.format === 'email' ? 'email' : prop.type === 'number' ? 'number' : 'text'
+    // Use description as toolparamdescription; fallback to key
+    const paramDesc = esc(String(prop.description || key))
+    return `  <input name="${esc(key)}" type="${type}" toolparamdescription="${paramDesc}"${required} />`
+  })
 
-  // Mode attribute — inferred from category
-  const modeMap: Record<string, string> = {
-    contact: 'general',
-    support: 'support',
-    booking: 'sales',
-    signup: 'general',
-    login: 'general',
-    subscribe: 'general',
+  // If inputSchema had enum (select), emit as <select> with options for fidelity
+  // Reconstruct from tool.inputSchema: enum lives on the property
+  const selectFields: string[] = []
+  for (const [key, prop] of Object.entries(tool.inputSchema.properties) as [string, any][]) {
+    if (Array.isArray(prop.enum) && prop.enum.length > 0) {
+      const required = tool.inputSchema.required.includes(key) ? ' required' : ''
+      const paramDesc = esc(String(prop.description || key))
+      const opts = prop.enum.map((v: string) => `    <option value="${esc(v)}">${esc(v)}</option>`).join('\n')
+      // Replace the generic <input> we already emitted for this key with a <select>
+      const idx = fields.findIndex((f) => f.includes(`name="${key}"`))
+      if (idx !== -1) {
+        fields[idx] =
+          `  <select name="${esc(key)}" toolparamdescription="${paramDesc}"${required}>\n${opts}\n  </select>`
+      }
+      void selectFields
+    }
   }
-  attrs.push(`data-mode="${modeMap[tool.category] || 'general'}"`)
 
-  // Trigger text if available
-  if (tool.triggerText) {
-    attrs.push(`data-trigger-text="${tool.triggerText}"`)
-  }
-
-  // Category as data attribute for widget routing
-  attrs.push(`data-category="${tool.category}"`)
-
-  // Name for widget tool resolution
-  attrs.push(`data-tool-name="${tool.name}"`)
-
-  // Page URL for redirect after submit
-  if (tool.pageUrl) {
-    attrs.push(`data-page-url="${tool.pageUrl}"`)
-  }
-
-  return attrs.join(' ')
+  const lines = [
+    `<!-- WebMCP declarative — paste these attributes into YOUR form. No JS needed. -->`,
+    `<!-- Discovered by agents via document.modelContext.getTools() (Chrome 146+ #enable-webmcp-testing) -->`,
+    `<form ${formAttrs.join(' ')}>`,
+    ...fields,
+    `  <button type="submit">${esc(tool.triggerText || 'Submit')}</button>`,
+    `</form>`,
+    ``,
+    `<!-- Imperative alternative (same tool, JS): -->`,
+    `<!-- document.modelContext.registerTool({ name: "${esc(tool.name)}", description: "${esc(tool.description)}", inputSchema: {/* see JSON output */}, execute: async (args) => { /* your form submit */ } }) -->`,
+  ]
+  return lines.join('\n')
 }
 
-/**
- * Main formatter — produces both JSON and HTML output.
- */
 export function formatMcpOutput(
   tools: ReturnType<typeof classifyIntent>[],
   format: 'json' | 'html' | 'both' = 'both',
-  llmKey?: string,
+  _llmKey?: string,
 ): {
   json: string
   html: string
@@ -87,27 +104,17 @@ export function formatMcpOutput(
   const htmlLines: string[] = []
 
   tools.forEach((tool, i) => {
-    // MCP JSON output
-    jsonLines.push(`// Tool ${i + 1}: ${tool.name}`)
-    jsonLines.push(formatMcpJson(tool))
+    jsonLines.push(`// Tool ${i + 1}: ${tool.name} — paste into document.modelContext.registerTool()`)
+    jsonLines.push(formatWebMcpJson(tool))
     jsonLines.push('')
 
-    // HTML attributes output
-    htmlLines.push(`<!-- Tool ${i + 1}: ${tool.name} -->`)
-    htmlLines.push(`<form ${formatHunchHtml(tool)}>`)
-    htmlLines.push(`  <!-- Form fields go here -->`)
-    htmlLines.push(`  <button type="submit">Submit</button>`)
-    htmlLines.push(`</form>`)
+    htmlLines.push(`<!-- Tool ${i + 1}: ${tool.name} — WebMCP declarative (copy into your HTML) -->`)
+    htmlLines.push(formatWebMcpHtml(tool))
     htmlLines.push('')
   })
 
-  const result: {
-    json: string
-    html: string
-  } = {
+  return {
     json: jsonLines.join('\n'),
     html: htmlLines.join('\n'),
   }
-
-  return result
 }
