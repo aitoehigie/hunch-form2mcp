@@ -1,6 +1,6 @@
 {
   "name": "hunch-form2mcp",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Convert website HTML forms into MCP tool definitions and Hunch-compatible HTML attributes",
   "main": "dist/index.js",
   "bin": {
